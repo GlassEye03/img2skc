@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI Graphite Studio</title>
+    <style>
+        :root { --bg: #0d0d0f; --panel: #161618; --accent: #00bcd4; --paper: #e5e5e0; }
+        body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: var(--bg); color: #eee; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 10px; touch-action: manipulation; }
+        
+        .header { text-align: center; margin-bottom: 15px; }
+        .header h1 { color: var(--accent); margin: 0; font-weight: 300; letter-spacing: 2px; font-size: 1.5rem; }
+
+        .workspace { display: flex; flex-wrap: wrap; gap: 15px; justify-content: center; width: 100%; max-width: 1200px; }
+        
+        .toolbar { background: var(--panel); padding: 15px; border-radius: 12px; border: 1px solid #333; width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        
+        .canvas-container { position: relative; background: var(--paper); border-radius: 4px; box-shadow: 0 15px 40px rgba(0,0,0,0.8); overflow: hidden; height: fit-content; border: 4px solid white; touch-action: none; }
+        canvas { display: block; max-width: 100%; height: auto; }
+
+        .control-group { display: flex; flex-direction: column; gap: 4px; }
+        .label-row { display: flex; justify-content: space-between; align-items: center; }
+        label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); opacity: 0.8; }
+        .meter-val { font-size: 10px; color: #fff; background: #333; padding: 2px 5px; border-radius: 3px; }
+        
+        input[type="range"] { accent-color: var(--accent); cursor: pointer; height: 20px; }
+
+        button { background: var(--accent); color: #000; border: none; padding: 12px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 14px; }
+        button:active { transform: scale(0.95); }
+        button.secondary { background: #333; color: white; }
+        
+        input[type="file"] { background: #222; padding: 8px; border-radius: 4px; font-size: 12px; border: 1px dashed #444; color: #ccc; }
+        select { background:#222; color:white; border:1px solid #444; padding:10px; border-radius:6px; font-size:14px; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>GRAPHITE ARTIST AI</h1>
+    </div>
+
+    <div class="workspace">
+        <div class="toolbar">
+            <input type="file" id="upload" accept="image/*">
+
+            <div class="control-group">
+                <div class="label-row"><label>Highlight Compression</label><span class="meter-val" id="hl-val">20%</span></div>
+                <input type="range" id="hlMeter" min="0" max="100" value="20">
+            </div>
+
+            <div class="control-group">
+                <div class="label-row"><label>Shadow Texture</label><span class="meter-val" id="sd-val">60%</span></div>
+                <input type="range" id="sdMeter" min="0" max="100" value="60">
+            </div>
+
+            <div class="control-group">
+                <div class="label-row"><label>Pencil Hardness</label><span class="meter-val" id="pg-val">8px</span></div>
+                <input type="range" id="pencilBlur" min="1" max="25" value="8">
+            </div>
+
+            <hr style="border:0; border-top:1px solid #333; margin:5px 0;">
+
+            <label>Smudge Brush (Touch/Mouse)</label>
+            <input type="range" id="brushSize" min="10" max="150" value="50">
+            <select id="brushMode">
+                <option value="darken">Add Charcoal (6B)</option>
+                <option value="lighten">Eraser (Luminance)</option>
+            </select>
+
+            <button id="download">Download PNG</button>
+            <button id="resetBrush" class="secondary">Reset Sketch</button>
+        </div>
+
+        <div class="canvas-container" id="container">
+            <canvas id="mainCanvas"></canvas>
+        </div>
+    </div>
+
+<script>
+    const upload = document.getElementById('upload');
+    const canvas = document.getElementById('mainCanvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    let originalData = null;
+    let isDrawing = false;
+
+    // Smart Logic Render
+    function processSketch() {
+        if (!originalData) return;
+        document.getElementById('hl-val').innerText = document.getElementById('hlMeter').value + '%';
+        document.getElementById('sd-val').innerText = document.getElementById('sdMeter').value + '%';
+        document.getElementById('pg-val').innerText = document.getElementById('pencilBlur').value + 'px';
+
+        const w = canvas.width, h = canvas.height;
+        const pixels = new Uint8ClampedArray(originalData.data);
+        const processed = new Uint8ClampedArray(pixels.length);
+        const hlC = document.getElementById('hlMeter').value / 100;
+        const sdI = document.getElementById('sdMeter').value / 100;
+
+        for (let i = 0; i < pixels.length; i += 4) {
+            let lum = pixels[i]*0.299 + pixels[i+1]*0.587 + pixels[i+2]*0.114;
+            if (lum > 170) lum = (lum - 220) * hlC + 220;
+            if (lum < 110) lum += ((Math.random()-0.5)*50) * sdI;
+            processed[i] = processed[i+1] = processed[i+2] = Math.max(0, Math.min(255, lum));
+            processed[i+3] = 255;
+        }
+
+        const blurR = parseInt(document.getElementById('pencilBlur').value);
+        const blurred = boxBlur(processed, w, h, blurR);
+        const final = new Uint8ClampedArray(processed.length);
+
+        for (let i = 0; i < processed.length; i += 4) {
+            const inv = 255 - blurred[i];
+            let val = inv === 255 ? 255 : Math.min(255, (processed[i] << 8) / (255 - inv));
+            if (val < 150) val *= 0.9;
+            final[i] = final[i+1] = final[i+2] = val; final[i+3] = 255;
+        }
+        ctx.putImageData(new ImageData(final, w, h), 0, 0);
+    }
+
+    // --- UNIVERSAL TOUCH & MOUSE BRUSH ---
+    function getPos(e) {
+        const rect = canvas.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        return {
+            x: (clientX - rect.left) * (canvas.width / rect.width),
+            y: (clientY - rect.top) * (canvas.height / rect.height)
+        };
+    }
+
+    function paint(e) {
+        if (!isDrawing || !originalData) return;
+        e.preventDefault();
+        const pos = getPos(e);
+        const size = document.getElementById('brushSize').value;
+        const mode = document.getElementById('brushMode').value;
+
+        ctx.globalCompositeOperation = mode === 'darken' ? 'multiply' : 'screen';
+        const grad = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, size);
+        grad.addColorStop(0, mode === 'darken' ? 'rgba(80,80,80,0.2)' : 'rgba(255,255,255,0.3)');
+        grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = grad;
+        ctx.beginPath(); ctx.arc(pos.x, pos.y, size, 0, Math.PI*2); ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+    }
+
+    canvas.addEventListener('mousedown', (e) => { isDrawing = true; paint(e); });
+    canvas.addEventListener('touchstart', (e) => { isDrawing = true; paint(e); }, {passive: false});
+    window.addEventListener('mouseup', () => isDrawing = false);
+    window.addEventListener('touchend', () => isDrawing = false);
+    canvas.addEventListener('mousemove', paint);
+    canvas.addEventListener('touchmove', paint, {passive: false});
+
+    // Helper: Box Blur
+    function boxBlur(data, w, h, r) {
+        const out = new Uint8ClampedArray(data.length);
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                let s = 0, c = 0;
+                for (let dy = -r; dy <= r; dy += 2) {
+                    const ny = Math.min(h-1, Math.max(0, y+dy));
+                    for (let dx = -r; dx <= r; dx += 2) {
+                        const nx = Math.min(w-1, Math.max(0, x+dx));
+                        s += data[(ny*w + nx)*4]; c++;
+                    }
+                }
+                const i = (y*w + x)*4;
+                out[i] = out[i+1] = out[i+2] = s/c; out[i+3] = 255;
+            }
+        }
+        return out;
+    }
+
+    upload.addEventListener('change', (e) => {
+        const reader = new FileReader();
+        reader.onload = (f) => {
+            const img = new Image();
+            img.onload = () => {
+                const max = window.innerWidth < 600 ? 600 : 1200;
+                const scale = Math.min(1, max/img.width, max/img.height);
+                canvas.width = img.width * scale; canvas.height = img.height * scale;
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                originalData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                processSketch();
+            };
+            img.src = f.target.result;
+        };
+        reader.readAsDataURL(e.target.files[0]);
+    });
+
+    document.querySelectorAll('input[type="range"]').forEach(el => el.addEventListener('input', processSketch));
+    document.getElementById('resetBrush').onclick = processSketch;
+    document.getElementById('download').onclick = () => {
+        const a = document.createElement('a');
+        a.download = 'sketch.png'; a.href = canvas.toDataURL(); a.click();
+    };
+</script>
+</body>
+</html>
